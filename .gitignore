@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# frontend build
+dist/
+dist-portable/
+
+# rust / tauri build
+src-tauri/target/
+
+# downloaded onnx models (large, fetched via scripts/fetch-models.ps1)
+src-tauri/models/
+
+# secrets / local config (api keys)
+.env
+.env.local
+config.local.toml
+
+# editor / os
+.DS_Store
+Thumbs.db
+.vscode/
+*.log

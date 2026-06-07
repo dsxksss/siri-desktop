@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Siri Desktop</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div class="island" id="island" data-state="idle" title="点击开始说话">
+        <div class="island-content">
+          <!-- Live status indicator -->
+          <div class="status-indicator">
+            <span class="pulse-dot"></span>
+            <span class="status-text">你好问问</span>
+            <span class="live-pill">Live</span>
+          </div>
+
+          <!-- Animated Voice wave bars (listening state) -->
+          <div class="voice-wave" id="voiceWave">
+            <span class="wave-bar bar1"></span>
+            <span class="wave-bar bar2"></span>
+            <span class="wave-bar bar3"></span>
+            <span class="wave-bar bar4"></span>
+            <span class="wave-bar bar5"></span>
+          </div>
+
+          <!-- Spinner loader (thinking state) -->
+          <div class="thinking-spinner" id="thinkingSpinner">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3"></circle>
+            </svg>
+          </div>
+
+          <!-- Text content for listening/thinking text & replies -->
+          <div class="content-text" id="contentText"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

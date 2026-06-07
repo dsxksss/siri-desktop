@@ -1,0 +1,52 @@
+# Siri-Desktop configuration.
+# Copy to `config.local.toml` to keep secrets (API keys) out of git;
+# config.local.toml takes precedence and is gitignored.
+
+# Display name only; the detector matches whatever is in models/kws/keywords.txt.
+# Bundled options: 你好问问 / 小爱同学 / 你好军哥
+wake_word = "你好问问"
+
+# Launch automatically at login (installed/portable build only, not during dev).
+autostart = false
+
+[models]
+# Base dir containing kws/ asr/ vad/ (populated by scripts/fetch-models.ps1).
+dir = "models"
+
+[audio]
+vad_threshold = 0.5    # speech probability cutoff (0..1); higher = less sensitive
+vad_min_silence = 0.4  # trailing silence (s) that ends an utterance (lower = snappier)
+listen_timeout = 8.0   # seconds to wait for speech after waking
+# Microphone to use: a substring of the device name (case-insensitive).
+# Empty = system default. Pick from the tray menu "选择麦克风", or run the app
+# once and check the log line "available input devices: [...]".
+input_device = ""
+
+# Spoken name -> path or command for the "open app" skill.
+# Use forward slashes or escaped backslashes in TOML.
+[apps]
+"网易云音乐" = "D:/CloudMusic/cloudmusic.exe"
+"微信" = "D:/Weixin/Weixin.exe"
+"企业微信" = "D:/cwechat/WXWork/WXWork.exe"
+"浏览器" = "msedge"
+"记事本" = "notepad"
+"计算器" = "calc"
+
+[netease]
+search_api = "direct"                  # "direct" or "service"
+service_url = "http://127.0.0.1:3000"  # used when search_api = "service"
+
+[llm]
+# Used as a fallback when the rule engine can't parse a command.
+# OpenAI-compatible endpoint (DeepSeek by default).
+# The API key is read from .env (DEEPSEEK_API_KEY); leave api_key empty here.
+provider = "deepseek"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-v4-flash"   # or "deepseek-v4-pro"
+api_key = ""
+
+[tts]
+# Speak replies aloud using the offline MeloTTS model (models/tts/).
+# Run scripts/fetch-models.ps1 to download it.
+enabled = true
+speed = 1.0
