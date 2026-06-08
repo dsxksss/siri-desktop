@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-type AssistantState = "idle" | "listening" | "thinking" | "acting" | "error";
+type AssistantState = "idle" | "waking" | "listening" | "thinking" | "acting" | "error";
 interface StatePayload {
   state: AssistantState;
   text?: string;
@@ -45,7 +45,9 @@ function applyState(p: StatePayload) {
     bubbleTimer = undefined;
   }
 
-  if (p.state === "listening") {
+  if (p.state === "waking") {
+    contentText.textContent = "我在";
+  } else if (p.state === "listening") {
     contentText.textContent = p.text && p.text.trim().length > 0 ? p.text : "正在聆听...";
   } else if (p.state === "thinking") {
     contentText.textContent = p.text && p.text.trim().length > 0 ? p.text : "正在思考...";

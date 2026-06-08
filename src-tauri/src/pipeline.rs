@@ -16,6 +16,9 @@ pub enum Control {
     Shutdown,
 }
 
+/// Callback invoked when the wake word is detected, before entering listen mode.
+pub type OnWake = Arc<dyn Fn() + Send + Sync>;
+
 /// Callback invoked with the final transcript. Wired to the intent dispatcher
 /// in later phases; the assistant state is already set to `thinking` when called.
 pub type OnText = Arc<dyn Fn(&AppHandle, String) + Send + Sync>;
@@ -28,13 +31,13 @@ pub struct PipelineHandle {
 
 /// Spawn the voice pipeline on its own thread. Audio capture and all model
 /// inference run here; the cpal stream is `!Send` so it must stay on this thread.
-pub fn start(app: AppHandle, cfg: Arc<Config>, on_text: OnText) -> PipelineHandle {
+pub fn start(app: AppHandle, cfg: Arc<Config>, on_text: OnText, on_wake: OnWake) -> PipelineHandle {
     let (ctrl_tx, ctrl_rx) = unbounded::<Control>();
     let app_err = app.clone();
     let join = std::thread::Builder::new()
         .name("voice-pipeline".into())
         .spawn(move || {
-            if let Err(e) = run(app, cfg, on_text, ctrl_rx) {
+            if let Err(e) = run(app, cfg, on_text, on_wake, ctrl_rx) {
                 log::error!("voice pipeline stopped: {e:#}");
                 emit_state(&app_err, "error", Some(&friendly_error(&e)));
             }
@@ -68,6 +71,7 @@ fn run(
     app: AppHandle,
     cfg: Arc<Config>,
     on_text: OnText,
+    on_wake: OnWake,
     ctrl: Receiver<Control>,
 ) -> anyhow::Result<()> {
     // Load models first so a missing-model error surfaces before we open the mic.
@@ -128,6 +132,15 @@ fn run(
             Mode::Wake => {
                 if let Some(keyword) = wake.accept(&chunk) {
                     log::info!("wake word detected: {keyword}");
+                    emit_state(&app, "waking", Some("我在"));
+                    on_wake();
+                    // Drain the ENTIRE rx buffer (audio accumulated during TTS) before
+                    // entering listen mode. Otherwise the assistant hears its own speech
+                    // and transcribes it as a command ("我在", "Yeah" etc).
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    while let Ok(_chunk) = rx.try_recv() {
+                        // keep draining
+                    }
                     enter_listen(&app, &vad, &mut mode);
                 }
             }

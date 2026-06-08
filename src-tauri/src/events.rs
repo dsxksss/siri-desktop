@@ -11,7 +11,7 @@ pub struct StatePayload {
 }
 
 /// Emit an assistant state change to the floating ball.
-/// `state` is one of: idle | listening | thinking | acting | error.
+/// `state` is one of: idle | waking | listening | thinking | acting | error.
 pub fn emit_state(app: &AppHandle, state: &str, text: Option<&str>) {
     let _ = app.emit(
         EVENT_STATE,

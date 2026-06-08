@@ -51,7 +51,8 @@ impl VoiceManager {
             let _ = h.join.join();
         }
         let cfg = Arc::new(config::load());
-        *guard = Some(pipeline::start(app.clone(), cfg, self.on_text.clone()));
+        let on_wake: pipeline::OnWake = Arc::new(|| {});
+        *guard = Some(pipeline::start(app.clone(), cfg, self.on_text.clone(), on_wake));
     }
 }
 
@@ -408,6 +409,13 @@ pub fn run() {
                 tts::TtsHandle::disabled()
             };
 
+            // Wake word callback: say "我在" briefly, then start listening.
+            let tts_wake = tts_handle.clone();
+            let on_wake: pipeline::OnWake = Arc::new(move || {
+                log::info!("wake acknowledged: 我在");
+                tts_wake.say("我在");
+            });
+
             // Parse the transcript (rules first, LLM fallback) and run the
             // matching skill, then reflect the result on the orb.
             let cfg_dispatch = cfg.clone();
@@ -486,7 +494,7 @@ pub fn run() {
                 current: Mutex::new(None),
             };
             let handle = app.handle().clone();
-            *manager.current.lock().unwrap() = Some(pipeline::start(handle, cfg, on_text));
+            *manager.current.lock().unwrap() = Some(pipeline::start(handle, cfg, on_text, on_wake));
             app.manage(manager);
 
             Ok(())
