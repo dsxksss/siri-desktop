@@ -10,6 +10,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@music163/ncm-cli": "^0.1.5",
     "@tauri-apps/api": "^2"
   },
   "devDependencies": {
