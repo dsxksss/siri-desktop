@@ -4,7 +4,7 @@
 
 # Display name only; the detector matches whatever is in models/kws/keywords.txt.
 # Bundled options: 你好问问 / 小爱同学 / 你好军哥
-wake_word = "你好问问"
+wake_word = "你好siri"
 
 # Launch automatically at login (installed/portable build only, not during dev).
 autostart = false
@@ -25,15 +25,12 @@ input_device = ""
 # Spoken name -> path or command for the "open app" skill.
 # Use forward slashes or escaped backslashes in TOML.
 [apps]
-"网易云音乐" = "D:/CloudMusic/cloudmusic.exe"
-"微信" = "D:/Weixin/Weixin.exe"
-"企业微信" = "D:/cwechat/WXWork/WXWork.exe"
 "浏览器" = "msedge"
 "记事本" = "notepad"
 "计算器" = "calc"
 
 [netease]
-search_api = "direct"                  # "direct" or "service"
+search_api = "direct"                  # "direct" or "service" (orpheus backend only)
 service_url = "http://127.0.0.1:3000"  # used when search_api = "service"
 
 [llm]

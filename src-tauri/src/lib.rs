@@ -3,6 +3,7 @@ mod audio;
 mod config;
 mod events;
 mod intent;
+mod models_dl;
 mod pipeline;
 mod skills;
 mod tts;
@@ -13,7 +14,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
+
+/// The current interactive area of the orb, in window-local logical pixels,
+/// reported by the frontend. The cursor-watch loop makes the (otherwise fully
+/// transparent) window click-through everywhere outside this box, so the empty
+/// area around the island stops blocking clicks to whatever is behind it.
+#[derive(Default)]
+struct HitArea(Mutex<Option<(i32, i32, i32, i32)>>);
 
 /// Owns the running voice pipeline and can restart it (e.g. after the user picks
 /// a different microphone).
@@ -29,6 +37,12 @@ impl VoiceManager {
         }
     }
 
+    fn cancel(&self) {
+        if let Some(h) = self.current.lock().unwrap().as_ref() {
+            let _ = h.control.send(pipeline::Control::Cancel);
+        }
+    }
+
     /// Stop the current pipeline (releasing the mic), reload config, restart.
     fn restart(&self, app: &AppHandle) {
         let mut guard = self.current.lock().unwrap();
@@ -41,10 +55,104 @@ impl VoiceManager {
     }
 }
 
+/// Stop and restart the voice pipeline with freshly-loaded config/models. Used
+/// after an in-app model download so wake word / ASR start working immediately.
+pub(crate) fn reload_pipeline_models(app: &AppHandle) {
+    if let Some(mgr) = app.try_state::<VoiceManager>() {
+        mgr.restart(app);
+    }
+}
+
 /// Orb clicked: start listening immediately, skipping the wake word.
 #[tauri::command]
 fn manual_listen(mgr: tauri::State<VoiceManager>) {
     mgr.listen();
+}
+
+/// Stop button clicked: cancel listening and return to wake mode.
+#[tauri::command]
+fn cancel_listen(mgr: tauri::State<VoiceManager>) {
+    mgr.cancel();
+}
+
+/// Status of every offline model group (for the settings "模型管理" tab).
+#[tauri::command]
+fn model_groups() -> Vec<models_dl::ModelGroup> {
+    models_dl::groups(&config::load())
+}
+
+/// Start downloading any missing model groups; progress streams over the
+/// `model://progress` event. No-op if a download is already running.
+#[tauri::command]
+fn download_models(app: AppHandle) {
+    models_dl::start_download(app, Arc::new(config::load()));
+}
+
+/// Request cancellation of an in-flight model download.
+#[tauri::command]
+fn cancel_model_download() {
+    models_dl::cancel();
+}
+
+/// Frontend reports the orb's current interactive box (logical px, window-local).
+#[tauri::command]
+fn set_hit_rect(x: i32, y: i32, w: i32, h: i32, hit: tauri::State<HitArea>) {
+    *hit.0.lock().unwrap() = Some((x, y, w, h));
+}
+
+/// Poll the global cursor and make the main window click-through whenever the
+/// cursor is outside the reported interactive box. Runs on its own thread.
+fn spawn_cursor_watch(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let handle = app.clone();
+    std::thread::Builder::new()
+        .name("cursor-watch".into())
+        .spawn(move || {
+            // Start interactive until the frontend reports a box.
+            let mut ignoring = false;
+            let _ = win.set_ignore_cursor_events(false);
+            loop {
+                std::thread::sleep(Duration::from_millis(80));
+                let rect = *handle.state::<HitArea>().0.lock().unwrap();
+                let Some((rx, ry, rw, rh)) = rect else { continue };
+                let (Ok(cursor), Ok(pos)) = (win.cursor_position(), win.inner_position()) else {
+                    continue;
+                };
+                let scale = win.scale_factor().unwrap_or(1.0);
+                // Interactive box in physical/global coordinates.
+                let left = pos.x as f64 + rx as f64 * scale;
+                let top = pos.y as f64 + ry as f64 * scale;
+                let right = left + rw as f64 * scale;
+                let bottom = top + rh as f64 * scale;
+                let inside =
+                    cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+                let want_ignore = !inside;
+                if want_ignore != ignoring {
+                    let _ = win.set_ignore_cursor_events(want_ignore);
+                    ignoring = want_ignore;
+                }
+            }
+        })
+        .expect("failed to spawn cursor-watch thread");
+}
+
+/// Debug helper: feed typed text into the exact same path a spoken command takes
+/// (skip the mic/ASR, reuse the pipeline's `on_text` dispatch). Lets you test
+/// intents/skills/LLM without speaking. Wired to the orb's hidden text input.
+#[tauri::command]
+fn simulate_text(text: String, app: AppHandle, mgr: tauri::State<VoiceManager>) {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+    log::info!("simulate_text (debug): {text}");
+    // Mirror pipeline.rs: show the transcript as `thinking`, then dispatch.
+    emit_state(&app, "thinking", Some(&text));
+    // Run off the IPC thread; the LLM fallback can block for seconds.
+    let on_text = mgr.on_text.clone();
+    std::thread::spawn(move || on_text(&app, text));
 }
 
 /// Available microphone names (for a future settings UI / debugging).
@@ -74,7 +182,7 @@ fn save_config(cfg: config::Config, app: tauri::AppHandle) -> Result<(), String>
     let path = dir.join("config.local.toml");
     std::fs::write(&path, text)
         .map_err(|e| format!("Failed to write config file: {e}"))?;
-        
+
     // Restart VoiceManager to apply new config
     if let Some(mgr) = app.try_state::<VoiceManager>() {
         mgr.restart(&app);
@@ -94,6 +202,26 @@ fn save_config(cfg: config::Config, app: tauri::AppHandle) -> Result<(), String>
     }
     
     Ok(())
+}
+
+/// Show the first-run setup wizard, creating its window if needed.
+fn open_onboarding(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("onboarding") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    } else {
+        let _ = tauri::WebviewWindowBuilder::new(
+            app,
+            "onboarding",
+            tauri::WebviewUrl::App("onboarding.html".into()),
+        )
+        .title("Siri Desktop 设置向导")
+        .inner_size(780.0, 560.0)
+        .min_inner_size(680.0, 480.0)
+        .resizable(true)
+        .center()
+        .build();
+    }
 }
 
 /// Centered horizontally at the top of the primary monitor.
@@ -125,7 +253,9 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![manual_listen, list_microphones, get_config, save_config])
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(HitArea::default())
+        .invoke_handler(tauri::generate_handler![manual_listen, cancel_listen, simulate_text, list_microphones, get_config, save_config, model_groups, download_models, cancel_model_download, set_hit_rect])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -137,6 +267,7 @@ pub fn run() {
 
             // ---- system tray ----
             let show = MenuItem::with_id(app, "show", "显示 / 隐藏", true, None::<&str>)?;
+            let wizard_item = MenuItem::with_id(app, "onboarding", "设置向导", true, None::<&str>)?;
             let config_item = MenuItem::with_id(app, "config", "设置", true, None::<&str>)?;
 
             // microphone picker submenu (ids are "mic::<name>", "" = default)
@@ -164,7 +295,7 @@ pub fn run() {
             let mic_menu = Submenu::with_items(app, "选择麦克风", true, &mic_refs)?;
 
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &mic_menu, &config_item, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &mic_menu, &wizard_item, &config_item, &quit])?;
             TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Siri Desktop")
@@ -196,6 +327,7 @@ pub fn run() {
                     }
                     match id {
                         "quit" => app.exit(0),
+                        "onboarding" => open_onboarding(app),
                         "config" => {
                             if let Some(w) = app.get_webview_window("settings") {
                                 let _ = w.show();
@@ -227,10 +359,34 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // ---- debug hotkey: Ctrl+Shift+K summons the text-input on the orb ----
+            // Lets you type a command (instead of speaking) when a mic isn't handy.
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+                let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyK);
+                let hk_handle = app.handle().clone();
+                if let Err(e) = app.global_shortcut().on_shortcut(shortcut, move |_app, _scut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    if let Some(w) = hk_handle.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                    // Tell the frontend to reveal & focus the debug input.
+                    let _ = hk_handle.emit("debug://toggle-input", ());
+                }) {
+                    log::warn!("failed to register debug hotkey (Ctrl+Shift+K): {e}");
+                }
+            }
+
             // ---- floating ball placement ----
             let handle = app.handle().clone();
             position_top_center(&handle);
             emit_state(&handle, "idle", None);
+
+            // Make the transparent area around the orb click-through.
+            spawn_cursor_watch(&handle);
 
             // ---- voice pipeline ----
             let cfg = Arc::new(config::load());
@@ -316,6 +472,14 @@ pub fn run() {
                     emit_state(&app, "idle", None);
                 });
             });
+
+            // First run (or models cleared): guide the user through setup.
+            if models_dl::groups(&cfg)
+                .iter()
+                .any(|g| g.required && !g.installed)
+            {
+                open_onboarding(app.handle());
+            }
 
             let manager = VoiceManager {
                 on_text: on_text.clone(),

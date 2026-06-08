@@ -11,6 +11,9 @@ interface StatePayload {
 const island = document.getElementById("island") as HTMLElement;
 const contentText = document.getElementById("contentText") as HTMLElement;
 const statusText = document.querySelector(".status-text") as HTMLElement;
+const debugInputWrap = document.getElementById("debugInputWrap") as HTMLElement;
+const debugInput = document.getElementById("debugInput") as HTMLInputElement;
+const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement;
 let bubbleTimer: number | undefined;
 
 let hideTimer: number | undefined;
@@ -62,11 +65,77 @@ function applyState(p: StatePayload) {
   updateVisibility();
 }
 
+// Debug text input: type a command instead of speaking. Submitting routes
+// through the backend `simulate_text`, which reuses the voice dispatch path.
+function showDebugInput(show: boolean) {
+  debugInputWrap.classList.toggle("active", show);
+  if (show) {
+    isHovered = true; // keep the orb from auto-docking while typing
+    updateVisibility();
+    debugInput.focus();
+    debugInput.select();
+  } else {
+    debugInput.blur();
+    isHovered = false;
+    updateVisibility();
+  }
+  reportHitRect();
+}
+
+// Report the orb's current interactive box (island + visible debug input) to the
+// backend, which makes the rest of the transparent window click-through. Coalesced
+// to one report per frame, and skipped when the box is unchanged.
+let hitReportScheduled = false;
+let lastHitKey = "";
+function reportHitRect() {
+  if (!("__TAURI_INTERNALS__" in window) || hitReportScheduled) return;
+  hitReportScheduled = true;
+  requestAnimationFrame(() => {
+    hitReportScheduled = false;
+    const rects = [island.getBoundingClientRect()];
+    if (debugInputWrap.classList.contains("active")) {
+      rects.push(debugInputWrap.getBoundingClientRect());
+    }
+    const left = Math.min(...rects.map((r) => r.left));
+    const top = Math.min(...rects.map((r) => r.top));
+    const right = Math.max(...rects.map((r) => r.right));
+    const bottom = Math.max(...rects.map((r) => r.bottom));
+    const x = Math.max(0, Math.floor(left));
+    const y = Math.max(0, Math.floor(top));
+    const w = Math.ceil(right - left);
+    const h = Math.ceil(bottom - top);
+    const key = `${x},${y},${w},${h}`;
+    if (key === lastHitKey) return;
+    lastHitKey = key;
+    invoke("set_hit_rect", { x, y, w, h }).catch(() => {});
+  });
+}
+
 const inTauri = "__TAURI_INTERNALS__" in window;
 
 if (inTauri) {
   const appWin = getCurrentWindow();
   appWin.setAlwaysOnTop(true).catch((e) => console.error(e));
+
+  // Backend hotkey (Ctrl+Shift+K) asks us to reveal the debug input.
+  listen("debug://toggle-input", () => {
+    showDebugInput(!debugInputWrap.classList.contains("active"));
+  });
+
+  debugInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const text = debugInput.value.trim();
+      if (!text) return;
+      invoke("simulate_text", { text }).catch((err) => console.error(err));
+      debugInput.value = "";
+      showDebugInput(false);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      debugInput.value = "";
+      showDebugInput(false);
+    }
+  });
 
   // Fetch wake word from config to show in idle status
   invoke<any>("get_config")
@@ -91,37 +160,39 @@ if (inTauri) {
   // backend drives the island via this event
   listen<StatePayload>("assistant://state", (e) => applyState(e.payload));
 
-  // distinguish a click (manual trigger) from a drag (move the window)
-  let down: { x: number; y: number } | null = null;
-  let dragging = false;
-  island.addEventListener("mousedown", (e) => {
-    down = { x: e.screenX, y: e.screenY };
-    dragging = false;
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (!down) return;
-    if (!dragging && Math.hypot(e.screenX - down.x, e.screenY - down.y) > 6) {
-      dragging = true;
-      appWin.startDragging().catch(() => {});
-    }
-  });
-  window.addEventListener("mouseup", () => {
-    if (down && !dragging) {
-      invoke("manual_listen").catch((e) => console.error(e));
-    }
-    down = null;
-    dragging = false;
+  // The orb is pinned to the top of the screen — not draggable. A click just
+  // starts listening (manual trigger, skipping the wake word).
+  island.addEventListener("click", () => {
+    invoke("manual_listen").catch((e) => console.error(e));
   });
 
+  if (stopBtn) {
+    stopBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      invoke("cancel_listen").catch((e) => console.error(e));
+    });
+  }
+
   // Hover detection for auto-hide
-  window.addEventListener("mouseenter", () => {
-    isHovered = true;
-    updateVisibility();
-  });
-  window.addEventListener("mouseleave", () => {
-    isHovered = false;
-    updateVisibility();
-  });
+  const setHovered = (hovered: boolean) => {
+    if (isHovered !== hovered) {
+      isHovered = hovered;
+      updateVisibility();
+    }
+  };
+
+  window.addEventListener("mouseenter", () => setHovered(true));
+  window.addEventListener("mouseleave", () => setHovered(false));
+  island.addEventListener("mouseenter", () => setHovered(true));
+  island.addEventListener("mouseleave", () => setHovered(false));
+  island.addEventListener("mousemove", () => setHovered(true));
+
+  // Keep the backend's click-through box in sync with the orb's live size
+  // (ResizeObserver fires throughout the expand/collapse animations too).
+  const hitObserver = new ResizeObserver(() => reportHitRect());
+  hitObserver.observe(island);
+  hitObserver.observe(debugInputWrap);
+  reportHitRect();
 
   // Initial check
   updateVisibility();
@@ -145,6 +216,13 @@ if (inTauri) {
     applyState(seq[1]);
   });
 
+  if (stopBtn) {
+    stopBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applyState({ state: "idle" });
+    });
+  }
+
   // Mock hover for web preview auto-hide
   island.addEventListener("mouseenter", () => {
     isHovered = true;
@@ -153,6 +231,25 @@ if (inTauri) {
   island.addEventListener("mouseleave", () => {
     isHovered = false;
     updateVisibility();
+  });
+
+  // Debug input preview: backtick toggles it (no backend; logs on submit).
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "`") {
+      e.preventDefault();
+      showDebugInput(!debugInputWrap.classList.contains("active"));
+    }
+  });
+  debugInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      console.log("simulate_text:", debugInput.value.trim());
+      debugInput.value = "";
+      showDebugInput(false);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      showDebugInput(false);
+    }
   });
 
   tick();

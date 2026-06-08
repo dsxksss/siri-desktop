@@ -328,15 +328,6 @@ fn merge(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
-/// Best path to open when the user wants to edit settings: the first existing
-/// candidate config, or the default location otherwise.
-pub fn editable_config_path() -> PathBuf {
-    candidate_config_paths()
-        .into_iter()
-        .find(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from("config.toml"))
-}
-
 /// Directories to search for config files, in priority order.
 pub fn config_base_dirs() -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = Vec::new();
@@ -351,17 +342,6 @@ pub fn config_base_dirs() -> Vec<PathBuf> {
         }
     }
     bases
-}
-
-fn candidate_config_paths() -> Vec<PathBuf> {
-    let names = ["config.local.toml", "config.toml"];
-    let mut out = Vec::new();
-    for base in config_base_dirs() {
-        for name in names {
-            out.push(base.join(name));
-        }
-    }
-    out
 }
 
 /// Persist the chosen microphone into config.local.toml's `[audio].input_device`

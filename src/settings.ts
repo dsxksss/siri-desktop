@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Local reference of the loaded config to modify and save
@@ -59,6 +60,18 @@ if (ttsEnabledCheckbox && ttsSpeedGroup) {
     ttsSpeedGroup.style.display = ttsEnabledCheckbox.checked ? "block" : "none";
   });
 }
+
+// NetEase — service URL visibility toggle
+const neteaseSearchApiSelect = document.getElementById("netease_search_api") as HTMLSelectElement;
+const neteaseServiceUrlGroup = document.getElementById("neteaseServiceUrlGroup") as HTMLElement;
+
+const updateNeteaseVisibility = () => {
+  if (neteaseServiceUrlGroup && neteaseSearchApiSelect) {
+    neteaseServiceUrlGroup.style.display = neteaseSearchApiSelect.value === "service" ? "block" : "none";
+  }
+};
+
+if (neteaseSearchApiSelect) neteaseSearchApiSelect.addEventListener("change", updateNeteaseVisibility);
 
 // Render Shortcut Apps Table
 const appsListBody = document.getElementById("appsListBody") as HTMLElement;
@@ -124,6 +137,135 @@ if (appsListBody) {
   });
 }
 
+// ===== Model management (download offline models with progress) =====
+interface ModelGroup {
+  id: string;
+  name: string;
+  desc: string;
+  approx_mb: number;
+  required: boolean;
+  installed: boolean;
+}
+
+const modelsList = document.getElementById("modelsList") as HTMLElement;
+const modelProgress = document.getElementById("modelProgress") as HTMLElement;
+const modelProgressLabel = document.getElementById("modelProgressLabel") as HTMLElement;
+const modelProgressPct = document.getElementById("modelProgressPct") as HTMLElement;
+const modelProgressFill = document.getElementById("modelProgressFill") as HTMLElement;
+const modelProgressBytes = document.getElementById("modelProgressBytes") as HTMLElement;
+const downloadModelsBtn = document.getElementById("downloadModelsBtn") as HTMLButtonElement;
+const cancelModelsBtn = document.getElementById("cancelModelsBtn") as HTMLButtonElement;
+
+const fmtMB = (mb: number) => (mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : mb + " MB");
+const fmtBytes = (n: number) => {
+  if (!n) return "";
+  const mb = n / (1024 * 1024);
+  return mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(1) + " MB";
+};
+
+const renderModels = async () => {
+  let groups: ModelGroup[];
+  try {
+    groups = await invoke<ModelGroup[]>("model_groups");
+  } catch (e) {
+    console.error("model_groups failed:", e);
+    return;
+  }
+  modelsList.innerHTML = "";
+  groups.forEach((g) => {
+    const row = document.createElement("div");
+    row.className = "model-row";
+    row.dataset.id = g.id;
+    row.innerHTML = `
+      <div class="model-info">
+        <div class="model-name">${g.name}${g.required ? "" : ' <span class="model-optional">可选</span>'}</div>
+        <div class="model-desc">${g.desc} · 约 ${fmtMB(g.approx_mb)}</div>
+      </div>
+      <span class="model-badge ${g.installed ? "installed" : "missing"}">${g.installed ? "已安装" : "未安装"}</span>
+    `;
+    modelsList.appendChild(row);
+  });
+  const missing = groups.filter((g) => !g.installed).length;
+  downloadModelsBtn.disabled = missing === 0;
+  downloadModelsBtn.textContent = missing === 0 ? "全部已安装" : `下载缺失模型 (${missing})`;
+};
+
+const markRowDownloading = (id: string) => {
+  const badge = modelsList.querySelector(`.model-row[data-id="${id}"] .model-badge`) as HTMLElement | null;
+  if (badge) {
+    badge.className = "model-badge downloading";
+    badge.textContent = "下载中…";
+  }
+};
+
+const setDownloadingUI = (active: boolean) => {
+  modelProgress.hidden = !active;
+  cancelModelsBtn.hidden = !active;
+  downloadModelsBtn.hidden = active;
+};
+
+const setupModels = () => {
+  renderModels();
+
+  downloadModelsBtn.addEventListener("click", () => {
+    setDownloadingUI(true);
+    modelProgressLabel.textContent = "准备中…";
+    modelProgressPct.textContent = "";
+    modelProgressBytes.textContent = "";
+    modelProgressFill.style.width = "0%";
+    invoke("download_models").catch((e) => console.error(e));
+  });
+
+  cancelModelsBtn.addEventListener("click", () => {
+    cancelModelsBtn.disabled = true;
+    cancelModelsBtn.textContent = "正在取消…";
+    invoke("cancel_model_download").catch((e) => console.error(e));
+  });
+
+  listen<any>("model://progress", (e) => {
+    const p = e.payload;
+
+    if (p.phase === "done") {
+      modelProgressLabel.textContent = "✓ 下载完成，模型已就绪";
+      modelProgressPct.textContent = "100%";
+      modelProgressFill.style.width = "100%";
+      modelProgressFill.classList.remove("indeterminate");
+      setDownloadingUI(false);
+      cancelModelsBtn.disabled = false;
+      cancelModelsBtn.textContent = "取消下载";
+      renderModels();
+      return;
+    }
+    if (p.phase === "error" || p.phase === "cancelled") {
+      modelProgressLabel.textContent =
+        (p.phase === "cancelled" ? "已取消" : "下载失败") + (p.message ? "：" + p.message : "");
+      modelProgressFill.classList.remove("indeterminate");
+      setDownloadingUI(false);
+      cancelModelsBtn.disabled = false;
+      cancelModelsBtn.textContent = "取消下载";
+      renderModels();
+      return;
+    }
+
+    // downloading | extracting | arranging
+    markRowDownloading(p.group);
+    const phaseLabel =
+      p.phase === "extracting" ? "解压中" : p.phase === "arranging" ? "整理文件" : "下载中";
+    modelProgressLabel.textContent = `${phaseLabel} · ${p.group_name} (${p.group_index}/${p.group_count})`;
+    if (p.phase === "downloading" && p.total > 0) {
+      const pct = Math.min(100, Math.round((p.received / p.total) * 100));
+      modelProgressPct.textContent = pct + "%";
+      modelProgressFill.style.width = pct + "%";
+      modelProgressFill.classList.remove("indeterminate");
+      modelProgressBytes.textContent = `${fmtBytes(p.received)} / ${fmtBytes(p.total)}`;
+    } else {
+      modelProgressPct.textContent = "";
+      modelProgressFill.classList.add("indeterminate");
+      modelProgressBytes.textContent = p.phase === "downloading" ? fmtBytes(p.received) : "";
+    }
+  });
+};
+
 // Load configurations from Rust backend
 const loadConfig = async () => {
   try {
@@ -156,6 +298,11 @@ const loadConfig = async () => {
     (document.getElementById("llm_base_url") as HTMLInputElement).value = originalConfig.llm?.base_url || "";
     (document.getElementById("llm_model") as HTMLInputElement).value = originalConfig.llm?.model || "";
     (document.getElementById("llm_api_key") as HTMLInputElement).value = originalConfig.llm?.api_key || "";
+
+    // 4.5 Populate NetEase Music
+    (document.getElementById("netease_search_api") as HTMLSelectElement).value = originalConfig.netease?.search_api || "direct";
+    (document.getElementById("netease_service_url") as HTMLInputElement).value = originalConfig.netease?.service_url || "http://127.0.0.1:3000";
+    updateNeteaseVisibility();
 
     // 5. Populate Apps
     localApps = { ...(originalConfig.apps || {}) };
@@ -215,6 +362,11 @@ settingsForm.addEventListener("submit", async (e) => {
         model: (document.getElementById("llm_model") as HTMLInputElement).value.trim(),
         api_key: (document.getElementById("llm_api_key") as HTMLInputElement).value,
       },
+      netease: {
+        ...originalConfig.netease,
+        search_api: (document.getElementById("netease_search_api") as HTMLSelectElement).value,
+        service_url: (document.getElementById("netease_service_url") as HTMLInputElement).value.trim(),
+      },
       apps: { ...localApps },
     };
 
@@ -249,4 +401,5 @@ cancelBtn.addEventListener("click", () => {
 document.addEventListener("DOMContentLoaded", () => {
   setupRangeListeners();
   loadConfig();
+  setupModels();
 });

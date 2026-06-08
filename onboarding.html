@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Siri Desktop 设置向导</title>
+    <link rel="stylesheet" href="/src/onboarding.css" />
+  </head>
+  <body>
+    <div class="wizard">
+      <!-- Left rail: step list -->
+      <aside class="rail">
+        <div class="brand">
+          <svg viewBox="0 0 24 24" class="brand-icon">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+            <circle cx="12" cy="12" r="3.2" fill="currentColor" />
+          </svg>
+          <span>Siri Desktop</span>
+        </div>
+        <ol class="rail-steps" id="railSteps"></ol>
+        <div class="rail-foot">本地运行 · 不上传语音</div>
+      </aside>
+
+      <!-- Right: step content -->
+      <main class="content">
+        <div class="panes">
+          <!-- 0 Welcome -->
+          <section class="pane active" data-step="0">
+            <h1>欢迎使用 Siri Desktop 👋</h1>
+            <p class="lead">一个完全本地运行的桌面语音助手。喊唤醒词即可用中文下达指令——调音量 / 亮度、打开程序、点歌等。</p>
+            <ul class="feature-list">
+              <li>🎙️ 离线唤醒 + 识别，不联网、不上传</li>
+              <li>🔊 系统音量 · 💡 屏幕亮度 · 🚀 打开程序 · 🎵 网易云点歌</li>
+              <li>🧠 规则听不懂时，自动交给大模型兜底（可选）</li>
+            </ul>
+            <p class="hint">这个向导会带你完成几步初始设置，约 1–2 分钟。</p>
+          </section>
+
+          <!-- 1 Models -->
+          <section class="pane" data-step="1">
+            <h1>下载离线模型</h1>
+            <p class="lead">语音功能需要离线模型（唤醒、识别、静音检测、合成），全部本地运行。合计约 400MB，需联网下载。</p>
+            <div class="models-list" id="modelsList"></div>
+            <div class="model-progress" id="modelProgress" hidden>
+              <div class="model-progress-head">
+                <span id="modelProgressLabel">准备中…</span>
+                <span class="model-progress-pct" id="modelProgressPct"></span>
+              </div>
+              <div class="progress-track"><div class="progress-fill" id="modelProgressFill"></div></div>
+              <span class="hint" id="modelProgressBytes"></span>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="btn btn-primary" id="downloadModelsBtn">下载缺失模型</button>
+              <button type="button" class="btn btn-tertiary" id="cancelModelsBtn" hidden>取消下载</button>
+            </div>
+          </section>
+
+          <!-- 2 Microphone -->
+          <section class="pane" data-step="2">
+            <h1>选择麦克风</h1>
+            <p class="lead">挑选用于唤醒和识别的输入设备，留空则使用系统默认。</p>
+            <label class="field-label" for="micSelect">输入麦克风</label>
+            <select id="micSelect" class="select">
+              <option value="">（系统默认麦克风）</option>
+            </select>
+            <p class="hint">之后也可以在托盘菜单「选择麦克风」或设置中随时更改。</p>
+          </section>
+
+          <!-- 3 LLM -->
+          <section class="pane" data-step="3">
+            <h1>大模型兜底 <span class="optional">可选</span></h1>
+            <p class="lead">当规则听不懂你的口语时，交给一个 OpenAI 兼容大模型理解或闲聊。不填则只用规则匹配。</p>
+            <div class="grid2">
+              <div>
+                <label class="field-label" for="llmProvider">服务商</label>
+                <input type="text" id="llmProvider" class="input" placeholder="deepseek" />
+              </div>
+              <div>
+                <label class="field-label" for="llmModel">模型</label>
+                <input type="text" id="llmModel" class="input" placeholder="deepseek-chat" />
+              </div>
+            </div>
+            <label class="field-label" for="llmBaseUrl">接口基址 (Base URL)</label>
+            <input type="text" id="llmBaseUrl" class="input" placeholder="https://api.deepseek.com/v1" />
+            <label class="field-label" for="llmApiKey">API 密钥</label>
+            <input type="password" id="llmApiKey" class="input" placeholder="••••••••（留空则禁用大模型）" />
+            <p class="hint">密钥保存在 <code>config.local.toml</code>（已 gitignore），也可改用 <code>.env</code> 的 DEEPSEEK_API_KEY。</p>
+          </section>
+
+          <!-- 4 Done -->
+          <section class="pane" data-step="4">
+            <h1>全部就绪 🎉</h1>
+            <p class="lead">对着麦克风说唤醒词 “<b id="wakeWordName">你好问问</b>”，悬浮球会进入聆听，然后说出指令即可。</p>
+            <ul class="feature-list">
+              <li>例如「音量调到 30」「打开网易云音乐」「播放晴天」</li>
+              <li>也可以直接点击悬浮球手动聆听（跳过唤醒词）</li>
+              <li>不方便说话时，按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> 打字下指令</li>
+            </ul>
+            <p class="hint">需要时可在托盘菜单重新打开本向导或「设置」。</p>
+          </section>
+        </div>
+
+        <footer class="footer">
+          <button type="button" class="btn btn-tertiary" id="backBtn">上一步</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-tertiary" id="skipBtn">跳过</button>
+          <button type="button" class="btn btn-primary" id="nextBtn">下一步</button>
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="/src/onboarding.ts"></script>
+  </body>
+</html>

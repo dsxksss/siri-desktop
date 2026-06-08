@@ -26,8 +26,12 @@ function Get-Archive($url, $outFile) {
 
 function Expand-Tar($archive, $dest) {
     Write-Host "  extracting $(Split-Path $archive -Leaf)"
-    # Windows 10/11 ship bsdtar (tar.exe), which auto-detects bzip2.
-    tar -xf $archive -C $dest
+    # Windows 10/11 ship bsdtar (tar.exe), which auto-detects bzip2. Call it by
+    # full path: a Git/MSYS `tar` earlier on PATH is GNU tar, which misreads the
+    # `C:\...` archive path as a remote host ("Cannot connect to C:").
+    $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path $tarExe)) { $tarExe = 'tar' }
+    & $tarExe -xf $archive -C $dest
     if ($LASTEXITCODE -ne 0) { throw "tar failed for $archive" }
 }
 

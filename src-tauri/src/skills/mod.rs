@@ -1,6 +1,6 @@
 mod brightness;
 mod media;
-mod netease;
+pub mod netease;
 mod open_app;
 mod volume;
 
@@ -44,7 +44,7 @@ pub fn dispatch(_app: &AppHandle, cfg: &Config, intent: Intent) -> Reply {
             Ok(v) => ok(format!("亮度 {v}%")),
             Err(e) => err(format!("亮度调节失败：{e}")),
         },
-        Intent::OpenApp { name } => match open_app::open_app(&cfg.apps, &name) {
+        Intent::OpenApp { name } => match open_app::open_app(cfg, &name) {
             Ok(n) => ok(format!("正在打开 {n}")),
             Err(e) => err(format!("{e}")),
         },

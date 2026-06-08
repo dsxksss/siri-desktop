@@ -10,6 +10,8 @@ use tauri::AppHandle;
 pub enum Control {
     /// Skip the wake word and start listening immediately (e.g. orb clicked).
     Listen,
+    /// Cancel listening and return to wake mode.
+    Cancel,
     /// Stop the pipeline and release the microphone (used when restarting).
     Shutdown,
 }
@@ -34,13 +36,26 @@ pub fn start(app: AppHandle, cfg: Arc<Config>, on_text: OnText) -> PipelineHandl
         .spawn(move || {
             if let Err(e) = run(app, cfg, on_text, ctrl_rx) {
                 log::error!("voice pipeline stopped: {e:#}");
-                emit_state(&app_err, "error", Some(&format!("{e}")));
+                emit_state(&app_err, "error", Some(&friendly_error(&e)));
             }
         })
         .expect("failed to spawn voice pipeline thread");
     PipelineHandle {
         control: ctrl_tx,
         join,
+    }
+}
+
+/// Turn a pipeline startup error into a short, actionable message for the orb.
+/// The full technical error is already in the log; this is what the user sees.
+fn friendly_error(e: &anyhow::Error) -> String {
+    let s = e.to_string();
+    if s.contains("model") && (s.contains(".onnx") || s.contains("model file")) {
+        "缺少语音模型 · 请运行 scripts/fetch-models.ps1 下载后重启".to_string()
+    } else if s.contains("input device") || s.contains("device") {
+        "麦克风不可用 · 请检查录音设备或在托盘菜单重新选择".to_string()
+    } else {
+        s
     }
 }
 
@@ -85,6 +100,14 @@ fn run(
         // Handle control messages (non-blocking).
         match ctrl.try_recv() {
             Ok(Control::Listen) => enter_listen(&app, &vad, &mut mode),
+            Ok(Control::Cancel) => {
+                if let Mode::Listen { .. } = mode {
+                    log::info!("listening cancelled by user");
+                    vad.reset();
+                    mode = Mode::Wake;
+                    emit_state(&app, "idle", None);
+                }
+            }
             Ok(Control::Shutdown) => break,
             Err(TryRecvError::Disconnected) => break,
             Err(TryRecvError::Empty) => {}

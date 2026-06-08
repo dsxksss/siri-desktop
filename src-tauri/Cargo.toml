@@ -48,11 +48,15 @@ futures = "0.3"
 # blocking HTTP for NetEase song search and the LLM fallback
 ureq = { version = "2", features = ["json"] }
 urlencoding = "2"
+# open URLs via the OS default handler (ShellExecute on Windows)
+open = "5"
 # audio playback for offline TTS (uses cpal 0.15, same as capture)
 rodio = "0.17"
 # single running instance + launch at login
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
+# global hotkey to summon the debug text-input (type a command instead of speaking)
+tauri-plugin-global-shortcut = "2"
 
 [target.'cfg(windows)'.dependencies]
 # system volume (Core Audio), media keys

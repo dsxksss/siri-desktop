@@ -8,13 +8,12 @@
   </head>
   <body>
     <div id="app">
-      <div class="island" id="island" data-state="idle" title="点击开始说话">
+      <div class="island" id="island" data-state="idle">
         <div class="island-content">
           <!-- Live status indicator -->
           <div class="status-indicator">
             <span class="pulse-dot"></span>
             <span class="status-text">你好问问</span>
-            <span class="live-pill">Live</span>
           </div>
 
           <!-- Animated Voice wave bars (listening state) -->
@@ -35,7 +34,26 @@
 
           <!-- Text content for listening/thinking text & replies -->
           <div class="content-text" id="contentText"></div>
+
+          <!-- Stop/cancel listening button -->
+          <button class="stop-btn" id="stopBtn" title="停止监听">
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+            </svg>
+          </button>
         </div>
+      </div>
+
+      <!-- Debug text input: type a command instead of speaking (Ctrl+Shift+K) -->
+      <div class="debug-input-wrap" id="debugInputWrap">
+        <input
+          type="text"
+          id="debugInput"
+          class="debug-input"
+          placeholder="输入指令，回车发送 · Esc 关闭"
+          spellcheck="false"
+          autocomplete="off"
+        />
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
